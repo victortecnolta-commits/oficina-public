@@ -45,7 +45,7 @@
   const app = document.getElementById('app');
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const num = v => Number(v || 0).toLocaleString('pt-BR');
-  let desenhou = false, dados = null;
+  let dados = null;
 
   function estado(tipo, titulo, texto) {
     app.innerHTML = '<div class="card estado ' + tipo + '"><h1>' + esc(titulo) + '</h1><div class="sub">' + esc(texto || '') + '</div></div>';
@@ -72,65 +72,18 @@
         '<table><thead><tr><th>Código</th><th>Produto</th><th style="text-align:right">Qtd.</th></tr></thead><tbody>' +
         (dados.p || []).map(p => '<tr><td>' + esc(p[0]) + '</td><td>' + esc(p[1] || '—') + '</td><td class="q">' + num(p[2]) + '</td></tr>').join('') +
         '</tbody></table>' +
-        '<div class="termo">Ao assinar, declaro ter recebido as peças acima, em perfeitas condições e nas quantidades descritas.</div>' +
+        '<div class="termo">Ao confirmar com o meu PIN, declaro ter recebido as peças acima, em perfeitas condições e nas quantidades descritas.</div>' +
       '</div>' +
       '<div class="card">' +
-        '<label>1. Assine no campo abaixo</label>' +
-        '<div class="pad-wrap"><canvas id="pad"></canvas><div class="pad-dica" id="pad-dica">Assine aqui com o dedo</div></div>' +
-        '<div class="linha"><button type="button" class="link-btn" onclick="limpar()">Limpar</button></div>' +
-        '<label>2. PIN de 6 dígitos (informado pelo Almoxarifado)</label>' +
+        '<label>PIN de 6 dígitos (informado pelo Almoxarifado)</label>' +
         '<input type="tel" id="pin" inputmode="numeric" maxlength="6" autocomplete="off" placeholder="______">' +
         '<button type="button" class="btn" id="btn" onclick="enviar()">Confirmar recebimento</button>' +
         '<div class="msg" id="msg"></div>' +
       '</div>';
-    iniciarPad();
-  }
-
-  let ctx, cv;
-  function iniciarPad() {
-    cv = document.getElementById('pad');
-    const r = cv.getBoundingClientRect();
-    const dpr = window.devicePixelRatio || 1;
-    cv.width = Math.round(r.width * dpr); cv.height = Math.round(r.height * dpr);
-    ctx = cv.getContext('2d');
-    ctx.scale(dpr, dpr);
-    ctx.lineWidth = 2.4; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#111'; ctx.fillStyle = '#111';
-    let desenhando = false, ult = null;
-    const pos = p => { const b = cv.getBoundingClientRect(); return { x: p.clientX - b.left, y: p.clientY - b.top }; };
-    const inicio = p => { desenhando = true; ult = pos(p); ctx.beginPath(); ctx.arc(ult.x, ult.y, 1.2, 0, 6.3); ctx.fill(); };
-    const mover = p => {
-      if (!desenhando) return;
-      const q = pos(p);
-      ctx.beginPath(); ctx.moveTo(ult.x, ult.y); ctx.lineTo(q.x, q.y); ctx.stroke();
-      ult = q; desenhou = true;
-      document.getElementById('pad-dica').style.display = 'none';
-    };
-    const fim = () => { desenhando = false; };
-    // toque (celular/tablet): preventDefault impede a rolagem e o toque longo de roubarem o gesto
-    cv.addEventListener('touchstart', e => { e.preventDefault(); inicio(e.touches[0]); }, { passive: false });
-    cv.addEventListener('touchmove', e => { e.preventDefault(); mover(e.touches[0]); }, { passive: false });
-    cv.addEventListener('touchend', e => { e.preventDefault(); fim(); }, { passive: false });
-    cv.addEventListener('touchcancel', fim);
-    // mouse (computador)
-    cv.addEventListener('mousedown', e => inicio(e));
-    window.addEventListener('mousemove', e => mover(e));
-    window.addEventListener('mouseup', fim);
-  }
-
-  function limpar() {
-    const b = cv.getBoundingClientRect(); ctx.clearRect(0, 0, b.width, b.height);
-    desenhou = false; document.getElementById('pad-dica').style.display = '';
-  }
-
-  // Reduz a imagem (360x140) pra caber folgado no limite de tamanho do issue do GitHub.
-  function assinaturaPequena() {
-    const o = document.createElement('canvas'); o.width = 360; o.height = 140;
-    o.getContext('2d').drawImage(cv, 0, 0, o.width, o.height);
-    return o.toDataURL('image/png');
   }
 
   // Cifra o conteúdo (AES-256-GCM; a chave AES vai cifrada em RSA-OAEP com a chave PÚBLICA).
-  // O token da página consegue LER issues; cifrado, ninguém além do servidor lê token/PIN/assinatura.
+  // O token da página consegue LER issues; cifrado, ninguém além do servidor lê token/PIN.
   const b64 = u8 => btoa(String.fromCharCode(...new Uint8Array(u8)));
   async function cifrar(texto) {
     const pub = await crypto.subtle.importKey('spki', Uint8Array.from(atob(CFG.chavePublica), c => c.charCodeAt(0)),
@@ -146,10 +99,8 @@
     const msg = document.getElementById('msg'), btn = document.getElementById('btn');
     const pin = document.getElementById('pin').value.trim();
     msg.className = 'msg';
-    if (!desenhou) { msg.textContent = 'Desenhe a sua assinatura no campo.'; msg.className = 'msg erro'; return; }
     if (!/^\d{6}$/.test(pin)) { msg.textContent = 'Digite o PIN de 6 dígitos.'; msg.className = 'msg erro'; return; }
-    const claro = JSON.stringify({ t: dados.t, pin: pin, a: assinaturaPequena() });
-    if (claro.length > 40000) { msg.textContent = 'Assinatura complexa demais. Limpe e assine de forma mais simples.'; msg.className = 'msg erro'; return; }
+    const claro = JSON.stringify({ t: dados.t, pin: pin });
     btn.disabled = true; msg.textContent = 'Enviando...';
     cifrar(claro).then(corpo => fetch('https://api.github.com/repos/' + CFG.repo + '/issues', {
       method: 'POST',
@@ -157,8 +108,8 @@
       body: JSON.stringify({ title: 'ASSINATURA', body: corpo }),
     })).then(r => {
       if (!r.ok) throw new Error('HTTP ' + r.status);
-      estado('ok', 'Assinatura enviada', 'O Almoxarifado receberá a confirmação em instantes. Pode fechar esta página.');
-    }).catch(() => { btn.disabled = false; msg.textContent = 'Não foi possível enviar. Tente de novo.'; msg.className = 'msg erro'; });
+      estado('ok', 'Confirmação enviada', 'O Almoxarifado receberá a confirmação em instantes. Pode fechar esta página.');
+    }).catch(e => { btn.disabled = false; msg.textContent = 'Não foi possível enviar (' + (e && e.message ? e.message : 'erro') + '). Tente de novo.'; msg.className = 'msg erro'; });
   }
 </script>
 </body>
